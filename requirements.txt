@@ -1,0 +1,8 @@
+# main modules
+pyTelegramBotAPI==4.35.0
+python-dotenv
+
+# database modules
+sqlalchemy
+alembic
+psycopg2[binary]
