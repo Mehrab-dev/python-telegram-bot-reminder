@@ -1,11 +1,14 @@
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 from datetime import timezone
+from datetime import datetime
 
 from app.bot.client import bot
 from app.bot.keyboards import (start_keyboard, add_title_task_keyboard, add_des_task_keyboard, add_due_date_task_keyboard, task_detail_keyboard)
 from app.database.database import LocalSession
 from app.database.models import TaskModel
 from app.api.parsers.date_parser import parse_date
+from app.api.parsers.task_parser import parse_task
+from app.api.utils.calculate_task import calculate_task
 
 
 user_state = {}
@@ -516,5 +519,51 @@ def text_handler(message):
         bot.send_message(
             chat_id=message.chat.id,
             text="✔️ تاریخ اعلان با موفقیت ویرایش شد",
+            reply_markup=keyboard
+        )
+    
+    else:
+        current_datetime = datetime.now()
+        parsed_task = parse_task(message.text)
+        if parsed_task is None:
+            return 
+        print(parsed_task)
+        task = calculate_task(current_datetime=current_datetime,parsed_task=parsed_task)
+        if task is None:
+            return
+        
+        keyboard = InlineKeyboardMarkup()
+        back_home_btn = InlineKeyboardButton(text="🏠 بازگشت به صفحه اصلی", callback_data="back_home")
+        keyboard.add(back_home_btn)
+
+        due_date = task["due_date"]
+        due_date_utc = due_date.astimezone(timezone.utc)
+
+        db = LocalSession()
+        new_task = TaskModel(
+            user_id = user_id,
+            title = task["title"],
+            description = task["description"],
+            due_date = due_date_utc
+        )
+        db.add(new_task)
+        db.commit()
+        db.close()
+
+        response = f"""
+                ✔️ وظیفه با موفقیت اضافه شد :
+                🔹 نام وظیفه : {task["title"]}
+                📂 توضیحات وظیفه : {task["description"] or '❌ ندارد'}
+                📆 تاریخ اعلان وظیفه : {task["due_date"]}
+            """
+    
+        if not user_id in user_history:
+            user_history[user_id] = []
+        user_history[user_id].append(user_state.get(user_id, "main_menu"))
+        user_state[user_id] = "main_menu"
+
+        bot.send_message(
+            chat_id=message.chat.id,
+            text=response,
             reply_markup=keyboard
         )

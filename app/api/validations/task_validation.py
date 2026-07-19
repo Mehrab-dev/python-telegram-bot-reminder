@@ -2,6 +2,13 @@ from datetime import datetime
 
 
 REQUIRED_FIELDS = {
+    "title",
+    "description",
+    "date",
+    "invalid"
+}
+
+REQUIRED_DATE_FIELDS = {
     "relative_day",
     "relative_duration",
     "weekday",
@@ -9,8 +16,7 @@ REQUIRED_FIELDS = {
     "month_reference",
     "time",
     "time_period",
-    "is_recurring",
-    "invalid"
+    "is_recurring"
 }
 
 VALID_UNITS = {
@@ -55,22 +61,31 @@ VALID_TIME_PERIOD = {
 
 
 
-
-
 def validation_json_structure(data):
     if not isinstance(data, dict):
         return False
     if not set(data.keys()) == REQUIRED_FIELDS:
         return False
+    if not isinstance(data["date"], dict):
+        return False
+    if not set(data["date"].keys()) == REQUIRED_DATE_FIELDS:
+        return False
     
     return True
 
 
-def validate_data_types(data):
-    if data["relative_day"] is not None and not isinstance(data["relative_day"], str):
+
+def validation_data_types(data):
+    if data["title"] is not None and not isinstance(data["title"], str):
+        return False
+    if data["description"] is not None and not isinstance(data["description"], str):
+        return False
+    if data["date"] is not None and not isinstance(data["date"], dict):
+        return False
+    if data["date"]["relative_day"] is not None and not isinstance(data["date"]["relative_day"], str):
         return False
     
-    duration = data["relative_duration"]
+    duration = data["date"]["relative_duration"]
     if duration is not None:
         if not isinstance(duration, dict):
             return False
@@ -86,79 +101,76 @@ def validate_data_types(data):
             return False
         if set(duration.keys()) != {"value", "unit"}:
             return False
-    
-    if data["weekday"] is not None and not isinstance(data["weekday"], str):
+        
+    if data["date"]["weekday"] is not None and not isinstance(data["date"]["weekday"], str):
         return False
-    if data["date"] is not None and not isinstance(data["date"], str):
+    if data["date"]["date"] is not None and not isinstance(data["date"]["date"], str):
         return False
-    if data["month_reference"] is not None and not isinstance(data["month_reference"], str):
+    if data["date"]["month_reference"] is not None and not isinstance(data["date"]["month_reference"], str):
         return False
-    if data["time"] is not None and not isinstance(data["time"], str):
+    if data["date"]["time"] is not None and not isinstance(data["date"]["time"], str):
         return False
-    if data["time_period"] is not None and not isinstance(data["time_period"], str):
+    if data["date"]["time_period"] is not None and not isinstance(data["date"]["time_period"], str):
         return False
-    if data["is_recurring"] is not None and not isinstance(data["is_recurring"], bool):
+    if data["date"]["is_recurring"] is not None and not isinstance(data["date"]["is_recurring"], bool):
         return False
     if not isinstance(data["invalid"], bool):
         return False
     
     return True
-    
+
 
 def validation_allowed_values(data):
-    if (data["relative_day"] is not None and data["relative_day"] not in VALID_RELATIVE_DAY):
+    if (data["date"]["relative_day"] is not None and data["date"]["relative_day"] not in VALID_RELATIVE_DAY):
+        return False
+    if (data["date"]["weekday"] is not None and data["date"]["weekday"] not in VALID_WEEK_DAY):
+        return False
+    if (data["date"]["month_reference"] is not None and data["date"]["month_reference"] not in VALID_MONTH_REFERENCE):
+        return False
+    if (data["date"]["time_period"] is not None and data["date"]["time_period"] not in VALID_TIME_PERIOD):
         return False
     
-    if (data["weekday"] is not None and data["weekday"] not in VALID_WEEK_DAY):
-        return False
-    
-    if (data["month_reference"] is not None and data["month_reference"] not in VALID_MONTH_REFERENCE):
-        return False
-    
-    if (data["time_period"] is not None and data["time_period"] not in VALID_TIME_PERIOD):
-        return False
-
     return True
     
 
 def validation_time(data):
-    if data["time"] is None:return True
+    if data["date"]["time"] is None:return True
     try:
-        datetime.strptime(data["time"], "%H:%M")
+        datetime.strptime(data["date"]["time"], "%H:%M")
         return True
     except ValueError:
         return False
 
 
 def validation_date(data):
-    if data["date"] is None:
+    if data["date"]["date"] is None:
         return True
     try:
-        datetime.strptime(data["date"], "%Y-%m-%d")
+        datetime.strptime(data["date"]["date"], "%Y-%m-%d")
         return True
     except ValueError:
         return False
-    
+
 
 def validation_logic(data):
 
     if data["invalid"]:
         if (
-            data["relative_day"] is not None
-            or data["weekday"] is not None
-            or data["date"] is not None
-            or data["time"] is not None
+            data["date"]["relative_day"] is not None
+            or data["date"]["weekday"] is not None
+            or data["date"]["date"] is not None
+            or data["date"]["time"] is not None
         ):
             return False
         return True
 
     count = 0
 
-    if data["relative_day"] is not None:
+    if data["date"]["relative_day"] is not None:
         count += 1
-    if data["weekday"] is not None:
+    if data["date"]["weekday"] is not None:
         count += 1
-    if data["date"] is not None:
+    if data["date"]["date"] is not None:
         count += 1
     if count > 1:
         return False
@@ -166,11 +178,10 @@ def validation_logic(data):
     return True
 
 
-def validation_datetime(data):
-
+def validation_task(data):
     if not validation_json_structure(data):
         return False
-    if not validate_data_types(data):
+    if not validation_data_types(data):
         return False
     if not validation_allowed_values(data):
         return False
@@ -180,5 +191,5 @@ def validation_datetime(data):
         return False
     if not validation_logic(data):
         return False
-
+    
     return True
