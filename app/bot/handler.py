@@ -1,9 +1,11 @@
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
+from datetime import timezone
 
 from app.bot.client import bot
 from app.bot.keyboards import (start_keyboard, add_title_task_keyboard, add_des_task_keyboard, add_due_date_task_keyboard, task_detail_keyboard)
 from app.database.database import LocalSession
 from app.database.models import TaskModel
+from app.api.parsers.date_parser import parse_date
 
 
 user_state = {}
@@ -61,7 +63,7 @@ def list_task_handler(call):
     user_state[user_id] = "waiting_task_list"
 
     db = LocalSession()
-    tasks = db.query(TaskModel).filter_by(user_id=user_id).all()
+    tasks = db.query(TaskModel).filter_by(user_id=user_id).order_by(TaskModel.id.desc()).all()
     keyboard = InlineKeyboardMarkup()
     for item in tasks:
         task_button = InlineKeyboardButton(
@@ -407,7 +409,22 @@ def text_handler(message):
 
     
     elif state == "waiting_due_date":
+        due_date = parse_date(message.text)
+
+        keyboard = InlineKeyboardMarkup()
+        back_home_btn = InlineKeyboardButton(text="🏠 بازگشت به صفحه اصلی", callback_data="back_home")
+        keyboard.add(back_home_btn)
+
+        if due_date is None:
+            bot.send_message(
+                chat_id=message.chat.id,
+                text="❌ تاریخ وارد شده معتبر نیست . تاریخ را دوباره وارد کنید.",
+                reply_markup=keyboard
+            )
+            return 
+        
         user_temp_task[user_id]["due_date"] = message.text
+        due_date_utc = due_date.astimezone(timezone.utc)
 
         keyboard = InlineKeyboardMarkup()
         back_home_btn = InlineKeyboardButton(text="🏠 بازگشت به صفحه اصلی", callback_data="back_home")
@@ -418,7 +435,7 @@ def text_handler(message):
             user_id = user_id,
             title = user_temp_task[user_id]["title"],
             description = user_temp_task[user_id]["description"],
-            due_date = user_temp_task[user_id]["due_date"]
+            due_date = due_date_utc
         )
         db.add(task)
         db.commit()
