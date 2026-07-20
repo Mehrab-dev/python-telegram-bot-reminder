@@ -3,11 +3,12 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 def start_keyboard():
     keyboard = InlineKeyboardMarkup()
     
-    add_task_btn = InlineKeyboardButton(text="➕ افزوذن وظیفه", callback_data="add_task")
+    add_task_btn = InlineKeyboardButton(text="➕ افزودن وظیفه", callback_data="add_task")
     list_task_btn = InlineKeyboardButton(text="📋 لیست وظایف", callback_data="list_task")
+    comp_list_task_btn = InlineKeyboardButton(text="📝✔️ لیست وظایف انجام شده", callback_data="comp_list")
     help_btn = InlineKeyboardButton(text=" 🔦 راهنما", callback_data="help")
     keyboard.add(add_task_btn, list_task_btn)
-    keyboard.add(help_btn)
+    keyboard.add(comp_list_task_btn, help_btn)
 
     return keyboard
 

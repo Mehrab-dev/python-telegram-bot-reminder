@@ -1,11 +1,10 @@
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
-from datetime import timezone
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from app.bot.client import bot
 from app.bot.keyboards import (start_keyboard, add_title_task_keyboard, add_des_task_keyboard, add_due_date_task_keyboard, task_detail_keyboard)
 from app.database.database import LocalSession
-from app.database.models import TaskModel
+from app.database.models import TaskModel, TaskStatus
 from app.api.parsers.date_parser import parse_date
 from app.api.parsers.task_parser import parse_task
 from app.api.utils.calculate_task import calculate_task
@@ -84,6 +83,75 @@ def list_task_handler(call):
         text="📋 لیست وظایف :",
         reply_markup=keyboard
     )
+
+
+# list completed tasks
+@bot.callback_query_handler(func=lambda call: call.data == "comp_list")
+def list_completed_task_handler(call):
+    db = LocalSession()
+    tasks = db.query(TaskModel).filter(
+        TaskModel.status == TaskStatus.COMPLETED
+    ).all()
+    db.close()
+
+    keyboard = InlineKeyboardMarkup()
+    for task in tasks:
+        buttons = InlineKeyboardButton(
+            text=task.title,
+            callback_data=f"task_{task.id}"
+        )
+        keyboard.add(buttons)
+    
+    delete_all_btn = InlineKeyboardButton(text="🗑️ حذف تاریخچه", callback_data="all_delete")
+    back_home_btn = InlineKeyboardButton(text="🏠 بازشگت به صفحه اصلی", callback_data="back_home")
+    keyboard.add(delete_all_btn, back_home_btn)
+
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=f"📝✔️ لیست تسک های انجام شده : \n",
+        reply_markup=keyboard
+    )
+
+
+# delete all of the completed tasks
+@bot.callback_query_handler(func=lambda call: call.data == "all_delete")
+def delete_all_comp_task_handler(call):
+
+    db = LocalSession()
+
+    tasks = db.query(TaskModel).filter(
+        TaskModel.status == TaskStatus.COMPLETED
+    ).all()
+
+    keyboard = InlineKeyboardMarkup()
+
+    back_home_btn = InlineKeyboardButton(text="🏠 بازگشت به صفحه اصلی", callback_data="back_home")
+    keyboard.add(back_home_btn)
+
+    if not tasks:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="❌ هیچ تسک انجام‌شده‌ای وجود ندارد.",
+            reply_markup=keyboard
+        )
+        db.close()
+        return
+
+    for task in tasks:
+        db.delete(task)
+
+    db.commit()
+
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="✔️ همه وظیفه های انجام شده با موفقیت حذف شد.",
+        reply_markup=keyboard
+    )
+
+    db.close()
 
 
 # get detail task
