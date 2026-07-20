@@ -46,8 +46,10 @@ def task_detail_keyboard(task_id):
     edit_title_btn = InlineKeyboardButton(text="✏️ ویرایش نام وظیفه", callback_data=f"edit_title_{task_id}")
     edit_des_btn = InlineKeyboardButton(text="✏️ ویرایش توضیحات وظیفه", callback_data=f"edit_des_{task_id}")
     edit_due_date_btn = InlineKeyboardButton(text="✏️ ویرایش تاریخ اعلان", callback_data=f"edit_due_{task_id}")
+    delete_btn = InlineKeyboardButton(text="🗑️ حذف وظیفه", callback_data=f"delete_{task_id}")
     back_btn = InlineKeyboardButton(text="🔙 بازگشت", callback_data="back")
     keyboard.add(edit_title_btn, edit_des_btn)
-    keyboard.add(edit_due_date_btn, back_btn)
+    keyboard.add(edit_due_date_btn, delete_btn)
+    keyboard.add(back_btn)
 
     return keyboard

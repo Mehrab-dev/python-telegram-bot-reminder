@@ -196,6 +196,66 @@ def update_due_date_handler(call):
     )
 
 
+
+# handler for delete task
+@bot.callback_query_handler(func=lambda call: call.data.startswith("delete_"))
+def delete_task_handler(call):
+    user_id = call.from_user.id
+    task_id = int(call.data.split("_")[1])
+    user_temp_task[user_id] = {
+        "task_id" : task_id
+    }
+
+    db = LocalSession()
+    task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
+    db.close()
+
+    if user_id not in user_history:
+        user_history[user_id] = []
+    user_history[user_id].append(user_state[user_id])
+
+    keyboard = InlineKeyboardMarkup()
+    delete_btn = InlineKeyboardButton(text="✔️ آره", callback_data="confirm_delete")
+    no_btn = InlineKeyboardButton(text="❌ نه", callback_data="no")
+    keyboard.add(delete_btn, no_btn)
+
+    user_state[user_id] = "waiting_delete_task"
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=f"❌ آیا از حذف وظیفه ` {task.title} ` مطمئنید ؟ ",
+        reply_markup=keyboard
+    )
+
+
+# handler delete or not delete of the task
+@bot.callback_query_handler(func=lambda call: call.data == "confirm_delete")
+def delete_handler(call):
+    user_id = call.from_user.id
+    task_id = user_temp_task[user_id]["task_id"]
+
+    if user_id not in user_history:
+        user_history[user_id] = []
+    user_history[user_id].append(user_state[user_id])
+
+    db = LocalSession()
+    task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
+    db.delete(task)
+    db.commit()
+    db.close()
+
+    keyboard = InlineKeyboardMarkup()
+    back_home = InlineKeyboardButton(text="🏠 بازگشت به صفحه اصلی", callback_data="back_home")
+    keyboard.add(back_home)
+
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="✔️ وظیفه شما با موفقیت حذف شد",
+        reply_markup=keyboard
+    )
+
+
 # back handler
 @bot.callback_query_handler(func=lambda call: call.data == "back")
 def back_handler(call):

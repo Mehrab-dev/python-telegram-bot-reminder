@@ -8,8 +8,7 @@ from app.database.database import Base
 
 class TaskStatus(Enum):
     PENDING = "pending"
-    NOTIFIED = "notified"
-    EXPIRED = "expired"
+    COMPLETED = "completed"
 
 
 
@@ -21,6 +20,6 @@ class TaskModel(Base):
     title:Mapped[str] = mapped_column(String, nullable=False)
     description:Mapped[str] = mapped_column(String, nullable=True)
     due_date:Mapped[datetime] = mapped_column(DateTime)
-    status:Mapped[str] = mapped_column(SQLEnum(TaskStatus), default=TaskStatus.PENDING, nullable=False)
+    status:Mapped[TaskStatus] = mapped_column(SQLEnum(TaskStatus), default=TaskStatus.PENDING, nullable=False)
     created_date:Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_date:Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), server_onupdate=func.now())
