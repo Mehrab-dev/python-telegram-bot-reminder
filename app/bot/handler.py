@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 from app.bot.client import bot
 from app.bot.keyboards import (start_keyboard, add_title_task_keyboard, add_des_task_keyboard, add_due_date_task_keyboard, task_detail_keyboard)
 from app.database.database import LocalSession
-from app.database.models import TaskModel, TaskStatus
+from app.database.models import TaskModel, TaskStatus, UserModel
 from app.api.parsers.date_parser import parse_date
 from app.api.parsers.task_parser import parse_task
 from app.api.utils.calculate_task import calculate_task
@@ -39,6 +39,27 @@ def start_handler(message):
 def add_task_handler(call):
     user_id = call.from_user.id
 
+    db = LocalSession()
+    user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
+    db.close()
+    
+    if not user or not user.access_token:
+        keyboard = InlineKeyboardMarkup(row_width=1)
+        btn_google = InlineKeyboardButton("🔗 ثبت‌ نام در Google Calendar", callback_data="google_login")
+        btn_back = InlineKeyboardButton("🏠 بازگشت به صفحه اصلی", callback_data="back_home")
+        keyboard.add(btn_google)
+        keyboard.add(btn_back)
+        
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="❌ شما در Google Calendar لاگین نکردید!\n\n"
+                 "لطفاً ابتدا روی دکمه زیر کلیک کن و وارد گوگل شو:\n"
+                 "🔹 ثبت‌ نام در Google Calendar",
+            reply_markup=keyboard
+        )
+        return
+
     if user_id not in user_history:
         user_history[user_id] = []
     user_history[user_id].append(user_state[user_id])
@@ -51,6 +72,82 @@ def add_task_handler(call):
         text="🔹 نام وظیفه خود را وارد کنید :",
         reply_markup=add_title_task_keyboard()
     )
+
+
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "google_login")
+def google_login_handler(call):
+    user_id = call.from_user.id
+    
+
+    db = LocalSession()
+    user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
+    db.close()
+    keyboard = InlineKeyboardMarkup()
+    btn_back = InlineKeyboardButton("🔙 برگشت به منو", callback_data="back_home")
+    keyboard.add(btn_back)
+
+    if user and user.access_token:
+        bot.answer_callback_query(
+            call.id, 
+            "✅ شما قبلاً به Google Calendar متصل شده‌اید!", 
+            show_alert=True
+        )
+        return
+    
+    from app.oauth_handler import GoogleOAuthHandler
+    oauth = GoogleOAuthHandler()
+    auth_link = oauth.get_auth_link(user_id)
+    
+    keyboard = InlineKeyboardMarkup()
+    btn_google = InlineKeyboardButton("🔗 رفتن به صفحه لاگین گوگل", url=auth_link)
+    btn_back = InlineKeyboardButton("🏠 بازگشت یه صفحه اصلی", callback_data="back_home")
+    keyboard.add(btn_google)
+    keyboard.add(btn_back)
+
+    auth_link = oauth.get_auth_link(user_id)
+    print(f"🔗 لینک ارسالی به کاربر: {auth_link}")
+    
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="🔐 برای اتصال به Google Calendar، روی دکمه زیر کلیک کن:\n\n"
+             "✅ بعد از لاگین، دوباره /start رو بزن تا وارد ربات بشی.",
+        reply_markup=keyboard
+    )
+
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "logout")
+def logout_handler(call):
+    user_id = call.from_user.id
+    
+    db = LocalSession()
+    user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
+    
+    if user:
+        user.access_token = ""
+        user.refresh_token = ""
+        user.token_expiry = datetime.now() - timedelta(days=1)  
+        db.commit()
+        db.close()
+        
+        bot.answer_callback_query(call.id, "✅ از حساب گوگل خارج شدید!", show_alert=True)
+        
+        first_name = call.message.chat.first_name
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"سلام {first_name} عزیز 👋\nلطفا یکی از گزینه های زیر را انتخاب کن",
+            reply_markup=start_keyboard()
+        )
+    else:
+        db.close()
+        bot.answer_callback_query(call.id, "❌ شما هنوز وارد حساب گوگل نشده‌اید!", show_alert=True)
+
+
+
 
 
 # handler for list task
@@ -569,6 +666,37 @@ def text_handler(message):
             due_date = due_date_utc
         )
         db.add(task)
+        db.flush()
+        print(f"✅ تسک در دیتابیس ثبت شد، ID: {task.id}")
+        print("🔄 در حال ساخت Event در Google Calendar...")
+        try:
+            user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
+            
+            if user and user.access_token:
+                from app.calendar_handler import CalendarHandler
+                
+                calendar = CalendarHandler(
+                    access_token=user.access_token,
+                    refresh_token=user.refresh_token
+                )
+                print("✅ CalendarHandler ساخته شد")
+                
+                google_event_id = calendar.create_event(
+                    summary=user_temp_task[user_id]["title"],
+                    description=user_temp_task[user_id]["description"],
+                    start_time=due_date_utc,
+                    end_time=due_date_utc + timedelta(hours=1),
+                    reminder_minutes=120
+                )
+                
+                task.google_event_id = google_event_id
+            
+        except Exception as e:
+            print(f"❌ خطا: {e}")
+            import traceback
+            traceback.print_exc()
+
+
         db.commit()
         db.close()
 

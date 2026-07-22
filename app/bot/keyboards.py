@@ -7,8 +7,12 @@ def start_keyboard():
     list_task_btn = InlineKeyboardButton(text="📋 لیست وظایف", callback_data="list_task")
     comp_list_task_btn = InlineKeyboardButton(text="📝✔️ لیست وظایف انجام شده", callback_data="comp_list")
     help_btn = InlineKeyboardButton(text=" 🔦 راهنما", callback_data="help")
+    google_btn = InlineKeyboardButton("🔗 ثبت‌نام در Google Calendar", callback_data="google_login")
+    logout_btn = InlineKeyboardButton("🚪 خروج از حساب Google", callback_data="logout")
+
     keyboard.add(add_task_btn, list_task_btn)
     keyboard.add(comp_list_task_btn, help_btn)
+    keyboard.add(google_btn, logout_btn)
 
     return keyboard
 
