@@ -9,6 +9,7 @@ import app.bot.handler
 from app.database.database import Base, engine, LocalSession
 from app.database.models import UserModel
 from app.oauth_handler import GoogleOAuthHandler
+from app.schedulers import scheduler_start
 
 
 Base.metadata.create_all(bind=engine)
@@ -50,10 +51,26 @@ def oauth2callback(code: str = Query(...), state: str = Query(...)):
                 token_expiry=datetime.now() + timedelta(seconds=tokens['expires_in'])
             )
             db.add(user)
-        
+
+        # بعد از db.commit() و قبل از db.close()
+        # اگر کاربر calendar_id نداشت، یه تقویم جدید بساز
+        if not user.calendar_id:
+            try:
+                from app.calendar_handler import CalendarHandler
+                calendar_handler = CalendarHandler(
+                    access_token=user.access_token,
+                    refresh_token=user.refresh_token
+                )
+                new_calendar_id = calendar_handler.create_calendar("Telegram Reminder")
+                user.calendar_id = new_calendar_id
+                db.commit()
+                print(f"✅ تقویم جدید ساخته شد: {new_calendar_id}")
+            except Exception as e:
+                print(f"❌ خطا در ساخت تقویم: {e}")
         db.commit()
         db.close()
         
+
         try:
 
             keyboard = InlineKeyboardMarkup()
@@ -84,8 +101,9 @@ def oauth2callback(code: str = Query(...), state: str = Query(...)):
 def run_fastapi():
     uvicorn.run(fastapi_app, host="127.0.0.1", port=8081)
 
-def run_bot():
+def start_bot():
     print("🤖 ربات شروع به کار کرد...")
+    scheduler_start()
     bot.infinity_polling()
 
 if __name__ == "__main__":
@@ -95,4 +113,4 @@ if __name__ == "__main__":
     fastapi_thread = threading.Thread(target=run_fastapi)
     fastapi_thread.daemon = True
     fastapi_thread.start()
-    run_bot()
+    start_bot()

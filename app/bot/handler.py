@@ -1,5 +1,8 @@
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 from datetime import datetime, timezone, timedelta
+from app.oauth_handler import GoogleOAuthHandler
+import jdatetime
+import threading
 
 from app.bot.client import bot
 from app.bot.keyboards import (start_keyboard, add_title_task_keyboard, add_des_task_keyboard, add_due_date_task_keyboard, task_detail_keyboard)
@@ -13,25 +16,34 @@ from app.api.utils.calculate_task import calculate_task
 user_state = {}
 user_temp_task = {}
 user_history = {}
+state_lock = threading.Lock()
+
+
+def convert_to_jalali(date_time):
+    jalali_date = jdatetime.datetime.fromgregorian(datetime=date_time)
+    return {
+        'date': jalali_date.strftime("%Y/%m/%d"),
+        'time': jalali_date.strftime("%H:%M")
+    }
+
 
 
 @bot.message_handler(commands=["start"])
 def start_handler(message):
     user_id = message.from_user.id
+    with state_lock:
+        if user_id not in user_history:
+            user_history[user_id] = []
+        user_state[user_id] = "main_menu"
+        first_name = message.chat.first_name
 
-    if user_id not in user_history:
-        user_history[user_id] = []
+        bot.send_message(
+            chat_id=message.chat.id,
+            text=f"سلام {first_name} عزیز 👋\n" \
+            "لطفا یکی از گزینه های زیر را انتخاب کن",
+            reply_markup=start_keyboard()
+        )
 
-    user_id = message.chat.id
-    user_state[user_id] = "main_menu"
-    first_name = message.chat.first_name
-
-    bot.send_message(
-        chat_id=message.chat.id,
-        text=f"سلام {first_name} عزیز 👋" \
-        "لطفا یکی از گزینه های زیر را انتخاب کن",
-        reply_markup=start_keyboard()
-    )
 
 
 # handler for add task
@@ -39,39 +51,22 @@ def start_handler(message):
 def add_task_handler(call):
     user_id = call.from_user.id
 
-    db = LocalSession()
-    user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
-    db.close()
-    
-    if not user or not user.access_token:
-        keyboard = InlineKeyboardMarkup(row_width=1)
-        btn_google = InlineKeyboardButton("🔗 ثبت‌ نام در Google Calendar", callback_data="google_login")
-        btn_back = InlineKeyboardButton("🏠 بازگشت به صفحه اصلی", callback_data="back_home")
-        keyboard.add(btn_google)
-        keyboard.add(btn_back)
+    with state_lock:
+        if user_id not in user_state:
+            user_state[user_id] = "main_menu"
+
+        if user_id not in user_history:
+            user_history[user_id] = []
+        user_history[user_id].append(user_state[user_id])
+
+        user_state[user_id] = "waiting_title"
         
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="❌ شما در Google Calendar لاگین نکردید!\n\n"
-                 "لطفاً ابتدا روی دکمه زیر کلیک کن و وارد گوگل شو:\n"
-                 "🔹 ثبت‌ نام در Google Calendar",
-            reply_markup=keyboard
+            text="🔹 نام وظیفه خود را وارد کنید :",
+            reply_markup=add_title_task_keyboard()
         )
-        return
-
-    if user_id not in user_history:
-        user_history[user_id] = []
-    user_history[user_id].append(user_state[user_id])
-
-    user_state[user_id] = "waiting_title"
-    
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text="🔹 نام وظیفه خود را وارد کنید :",
-        reply_markup=add_title_task_keyboard()
-    )
 
 
 
@@ -80,10 +75,10 @@ def add_task_handler(call):
 def google_login_handler(call):
     user_id = call.from_user.id
     
-
     db = LocalSession()
     user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
     db.close()
+
     keyboard = InlineKeyboardMarkup()
     btn_back = InlineKeyboardButton("🔙 برگشت به منو", callback_data="back_home")
     keyboard.add(btn_back)
@@ -96,7 +91,6 @@ def google_login_handler(call):
         )
         return
     
-    from app.oauth_handler import GoogleOAuthHandler
     oauth = GoogleOAuthHandler()
     auth_link = oauth.get_auth_link(user_id)
     
@@ -119,34 +113,42 @@ def google_login_handler(call):
 
 
 
+# handler for logout from google calendar
 @bot.callback_query_handler(func=lambda call: call.data == "logout")
 def logout_handler(call):
     user_id = call.from_user.id
+    first_name = call.message.chat.first_name
     
     db = LocalSession()
     user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
     
-    if user:
-        user.access_token = ""
-        user.refresh_token = ""
-        user.token_expiry = datetime.now() - timedelta(days=1)  
-        db.commit()
+    if not user or not user.access_token:
         db.close()
-        
-        bot.answer_callback_query(call.id, "✅ از حساب گوگل خارج شدید!", show_alert=True)
-        
-        first_name = call.message.chat.first_name
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text=f"سلام {first_name} عزیز 👋\nلطفا یکی از گزینه های زیر را انتخاب کن",
-            reply_markup=start_keyboard()
+        bot.answer_callback_query(
+            call.id, 
+            "❌ شما در حال حاضر لاگین نیستید!", 
+            show_alert=True
         )
-    else:
-        db.close()
-        bot.answer_callback_query(call.id, "❌ شما هنوز وارد حساب گوگل نشده‌اید!", show_alert=True)
-
-
+        return
+    
+    user.access_token = ""
+    user.refresh_token = ""
+    user.token_expiry = datetime.now() - timedelta(days=1)
+    db.commit()
+    db.close()
+    
+    bot.answer_callback_query(
+        call.id, 
+        "✅ از حساب گوگل خارج شدید!", 
+        show_alert=True
+    )
+    
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=f"سلام {first_name} عزیز 👋\nلطفا یکی از گزینه های زیر را انتخاب کن",
+        reply_markup=start_keyboard()
+    )
 
 
 
@@ -154,12 +156,12 @@ def logout_handler(call):
 @bot.callback_query_handler(func=lambda call: call.data == "list_task")
 def list_task_handler(call):
     user_id = call.from_user.id
+    with state_lock:
+        if user_id not in user_history:
+            user_history[user_id] = []
+        user_history[user_id].append(user_state[user_id])
 
-    if user_id not in user_history:
-        user_history[user_id] = []
-    user_history[user_id].append(user_state[user_id])
-
-    user_state[user_id] = "waiting_task_list"
+        user_state[user_id] = "waiting_task_list"
 
     db = LocalSession()
     tasks = db.query(TaskModel).filter_by(user_id=user_id).order_by(TaskModel.id.desc()).all()
@@ -256,22 +258,33 @@ def delete_all_comp_task_handler(call):
 def get_detail_task(call):
     task_id = int(call.data.split("_")[1])
     user_id = call.from_user.id
+    with state_lock:
+        if user_id not in user_history:
+            user_history[user_id] = []
+        user_history[user_id].append(user_state[user_id])
 
-    if user_id not in user_history:
-        user_history[user_id] = []
-    user_history[user_id].append(user_state[user_id])
-
-    user_state[user_id] = "waiting_task_detail"
+        user_state[user_id] = "waiting_task_detail"
 
     db = LocalSession()
     task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
     db.close()
 
-    response = f"""
-            🔹 نام وظیفه : {task.title}
-            📂 توضیحات وظیفه : {task.description}
-            📆 تاریخ اعلان : {task.due_date}
-        """
+    status_map = {
+    TaskStatus.PENDING: "در انتظار",
+    TaskStatus.COMPLETED: "انجام شده"
+    }
+
+    jalali = convert_to_jalali(task.due_date)
+
+    response = (
+        f"📋 جزییات وظیفه\n\n"
+        f"📌 عنوان: {task.title}\n"
+        f"📝 توضیحات: {task.description or '❌ ندارد'}\n"
+        f"📆 تاریخ: {jalali['date']}\n"
+        f"🕐 ساعت: {jalali['time']}\n"
+        f"🔖 وضعیت: {status_map.get(task.status, task.status.value)}"
+    )
+
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
@@ -285,15 +298,16 @@ def get_detail_task(call):
 def update_title_handler(call):
     user_id = call.from_user.id
     task_id = int(call.data.split("_")[2])
-    user_temp_task[user_id] = {
-        "task_id" : task_id
-    }
+    with state_lock:
+        user_temp_task[user_id] = {
+            "task_id" : task_id
+        }
 
-    if user_id not in user_history:
-        user_history[user_id] = []
-    user_history[user_id].append(user_state[user_id])
+        if user_id not in user_history:
+            user_history[user_id] = []
+        user_history[user_id].append(user_state[user_id])
 
-    user_state[user_id] = "waiting_new_title"
+        user_state[user_id] = "waiting_new_title"
 
     keyboard = InlineKeyboardMarkup()
     back_btn = InlineKeyboardButton(text="🔙 بازگشت", callback_data="back")
@@ -312,15 +326,16 @@ def update_title_handler(call):
 def update_description_handler(call):
     user_id = call.from_user.id
     task_id = int(call.data.split("_")[2])
-    user_temp_task[user_id] = {
-        "task_id" : task_id
-    }
+    with state_lock:
+        user_temp_task[user_id] = {
+            "task_id" : task_id
+        }
 
-    if user_id not in user_history:
-        user_history[user_id]= []
-    user_history[user_id].append(user_state[user_id])
+        if user_id not in user_history:
+            user_history[user_id]= []
+        user_history[user_id].append(user_state[user_id])
 
-    user_state[user_id] = "waiting_new_des"
+        user_state[user_id] = "waiting_new_des"
 
     keyboard = InlineKeyboardMarkup()
     back_btn = InlineKeyboardButton(text="🔙 بازگشت", callback_data="back")
@@ -339,15 +354,16 @@ def update_description_handler(call):
 def update_due_date_handler(call):
     user_id = call.from_user.id
     task_id = int(call.data.split("_")[2])
-    user_temp_task[user_id] = {
-        "task_id" : task_id
-    } 
+    with state_lock:
+        user_temp_task[user_id] = {
+            "task_id" : task_id
+        } 
 
-    if user_id not in user_history:
-        user_history[user_id] = []
-    user_history[user_id].append(user_state[user_id])
+        if user_id not in user_history:
+            user_history[user_id] = []
+        user_history[user_id].append(user_state[user_id])
 
-    user_state[user_id] = "waiting_new_due"
+        user_state[user_id] = "waiting_new_due"
 
     keyboard = InlineKeyboardMarkup()
     back_btn = InlineKeyboardButton(text="🔙 بازگشت", callback_data="back")
@@ -367,17 +383,19 @@ def update_due_date_handler(call):
 def delete_task_handler(call):
     user_id = call.from_user.id
     task_id = int(call.data.split("_")[1])
-    user_temp_task[user_id] = {
-        "task_id" : task_id
-    }
 
     db = LocalSession()
     task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
     db.close()
 
-    if user_id not in user_history:
-        user_history[user_id] = []
-    user_history[user_id].append(user_state[user_id])
+    with state_lock:
+        user_temp_task[user_id] = {
+            "task_id" : task_id
+        }
+
+        if user_id not in user_history:
+            user_history[user_id] = []
+        user_history[user_id].append(user_state[user_id])
 
     keyboard = InlineKeyboardMarkup()
     delete_btn = InlineKeyboardButton(text="✔️ آره", callback_data="confirm_delete")
@@ -398,10 +416,10 @@ def delete_task_handler(call):
 def delete_handler(call):
     user_id = call.from_user.id
     task_id = user_temp_task[user_id]["task_id"]
-
-    if user_id not in user_history:
-        user_history[user_id] = []
-    user_history[user_id].append(user_state[user_id])
+    with state_lock:
+        if user_id not in user_history:
+            user_history[user_id] = []
+        user_history[user_id].append(user_state[user_id])
 
     db = LocalSession()
     task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
@@ -421,24 +439,68 @@ def delete_handler(call):
     )
 
 
+
+# reject handler
+@bot.callback_query_handler(func=lambda call: call.data == "reject")
+def reject_description_handler(call):
+    user_id = call.from_user.id
+    
+    with state_lock:
+        user_temp_task[user_id]["description"] = None
+        
+        if user_id not in user_history:
+            user_history[user_id] = []
+        user_history[user_id].append(user_state[user_id])
+        
+        user_state[user_id] = "waiting_due_date"
+    
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="📆 تاریخ اعلان را وارد کنید :",
+        reply_markup=add_due_date_task_keyboard()
+    )
+
+
+
+# handler for retry
+@bot.callback_query_handler(func=lambda call: call.data == "retry")
+def retry_handler(call):
+    user_id = call.from_user.id
+
+    with state_lock:
+        if user_id in user_temp_task:
+            user_temp_task[user_id].pop("due_date", None)
+
+        user_state[user_id] = "waiting_due_date"
+
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="📆 تاریخ اعلان را وارد کنید :",
+        reply_markup=add_due_date_task_keyboard()
+    )
+
+
 # back handler
 @bot.callback_query_handler(func=lambda call: call.data == "back")
 def back_handler(call):
     user_id = call.from_user.id
-    if user_id not in user_history:
-        user_history[user_id] = []
-    state = user_state[user_id]
+    first_name = call.message.chat.first_name
+
+    with state_lock:
+        if user_id not in user_history:
+            user_history[user_id] = []
+        state = user_state[user_id]
 
     if state == "waiting_title":
         previous_state = user_history[user_id].pop()
         user_state[user_id] = previous_state
 
-        first_name = call.message.chat.first_name
-
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=f"سلام {first_name} عزیز 👋" \
+            text=f"سلام {first_name} عزیز 👋\n" \
             "لطفا یکی از گزینه های زیر را انتخاب کن",
             reply_markup=start_keyboard()
         )
@@ -446,7 +508,8 @@ def back_handler(call):
 
     elif state == "waiting_description":
         previous_state = user_history[user_id].pop()
-        user_state[user_id] = previous_state
+        with state_lock:
+            user_state[user_id] = previous_state
 
         bot.edit_message_text(
         chat_id=call.message.chat.id,
@@ -458,7 +521,8 @@ def back_handler(call):
     
     elif state == "waiting_due_date":
         previous_state = user_history[user_id].pop()
-        user_state[user_id] = previous_state
+        with state_lock:
+            user_state[user_id] = previous_state
 
         bot.edit_message_text(
             chat_id=call.message.chat.id,
@@ -470,13 +534,13 @@ def back_handler(call):
 
     elif state == "waiting_task_list":
         previous_state = user_history[user_id].pop()
-        user_state[user_id] = previous_state
-        first_name = call.message.chat.first_name
+        with state_lock:
+            user_state[user_id] = previous_state
 
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=f"سلام {first_name} عزیز 👋" \
+            text=f"سلام {first_name} عزیز 👋\n" \
             "لطفا یکی از گزینه های زیر را انتخاب کن",
             reply_markup=start_keyboard()
         )
@@ -484,10 +548,12 @@ def back_handler(call):
 
     elif state == "waiting_task_detail":
         previous_state = user_history[user_id].pop()
-        user_state[user_id] = previous_state
+        with state_lock:
+            user_state[user_id] = previous_state
 
         db = LocalSession()
         tasks = db.query(TaskModel).filter_by(user_id=user_id).all()
+
         keyboard = InlineKeyboardMarkup()
         for item in tasks:
             task_button = InlineKeyboardButton(
@@ -509,8 +575,9 @@ def back_handler(call):
 
     elif state == "waiting_new_title":
         previous_state = user_history[user_id].pop()
-        user_state[user_id] = previous_state
-        task_id = user_temp_task[user_id]["task_id"]
+        with state_lock:
+            user_state[user_id] = previous_state
+            task_id = user_temp_task[user_id]["task_id"]
 
         db = LocalSession()
         task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
@@ -531,8 +598,9 @@ def back_handler(call):
 
     elif state == "waiting_new_des":
         previous_state = user_history[user_id].pop()
-        user_state[user_id] = previous_state
-        task_id = user_temp_task[user_id]["task_id"]
+        with state_lock:
+            user_state[user_id] = previous_state
+            task_id = user_temp_task[user_id]["task_id"]
 
         db = LocalSession()
         task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
@@ -553,8 +621,9 @@ def back_handler(call):
 
     elif state == "waiting_new_due":
         previous_state = user_history[user_id].pop()
-        user_state[user_id] = previous_state
-        task_id = user_temp_task[user_id]["task_id"]
+        with state_lock:
+            user_state[user_id] = previous_state
+            task_id = user_temp_task[user_id]["task_id"]
 
         db = LocalSession()
         task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
@@ -580,18 +649,18 @@ def back_home_handler(call):
     user_id = call.from_user.id
     first_name = call.message.chat.first_name
 
-    user_state[user_id] = "main_menu"
-    
-    if user_id in user_temp_task:
-        del user_temp_task[user_id]
-    
-    if user_id in user_history:
-        user_history[user_id] = []
+    with state_lock:
+        user_state[user_id] = "main_menu"
+        if user_id in user_temp_task:
+            del user_temp_task[user_id]
+        
+        if user_id in user_history:
+            user_history[user_id] = []
 
         bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
-        text=f"سلام {first_name} عزیز 👋" \
+        text=f"سلام {first_name} عزیز 👋\n" \
         "لطفا یکی از گزینه های زیر را انتخاب کن",
         reply_markup=start_keyboard()
     )
@@ -601,18 +670,20 @@ def back_home_handler(call):
 @bot.message_handler(func=lambda message: True)
 def text_handler(message):
     user_id = message.from_user.id
-    state = user_state.get(user_id)
+    with state_lock:
+        state = user_state.get(user_id)
 
     if state == "waiting_title":
-        user_temp_task[user_id] = {
-            "title" : message.text
-        }
+        with state_lock:
+            user_temp_task[user_id] = {
+                "title" : message.text
+            }
 
-        if user_id not in user_history:
-            user_history[user_id] = []
-        user_history[user_id].append(user_state[user_id])
+            if user_id not in user_history:
+                user_history[user_id] = []
+            user_history[user_id].append(user_state[user_id])
 
-        user_state[user_id] = "waiting_description"
+            user_state[user_id] = "waiting_description"
         bot.send_message(
             chat_id=message.chat.id,
             text="✏️ توضیحات وظیفه خود را وارد کنید :",
@@ -621,13 +692,14 @@ def text_handler(message):
     
     
     elif state == "waiting_description":
-        user_temp_task[user_id]["description"] = message.text
+        with state_lock:
+            user_temp_task[user_id]["description"] = message.text
 
-        if user_id not in user_history:
-            user_history[user_id] = []
-        user_history[user_id].append(user_state[user_id])
+            if user_id not in user_history:
+                user_history[user_id] = []
+            user_history[user_id].append(user_state[user_id])
 
-        user_state[user_id] = "waiting_due_date"
+            user_state[user_id] = "waiting_due_date"
 
         bot.send_message(
             chat_id=message.chat.id,
@@ -635,18 +707,31 @@ def text_handler(message):
             reply_markup=add_due_date_task_keyboard()
         )
 
-    
+
     elif state == "waiting_due_date":
-        due_date = parse_date(message.text)
+        try:
+            due_date = parse_date(message.text)
+
+        except Exception as e:
+            keyboard = InlineKeyboardMarkup()
+            retry_btn = InlineKeyboardButton(text="🔄️ تلاش مجدد", callback_data="retry")
+            keyboard.add(retry_btn)
+
+            bot.send_message(
+                chat_id=message.chat.id,
+                text="❌ خطا در تحلیل تاریخ; لطفا تاریخ را مجدد وارد کنید!",
+                reply_markup=keyboard
+            )
+            return
 
         keyboard = InlineKeyboardMarkup()
-        back_home_btn = InlineKeyboardButton(text="🏠 بازگشت به صفحه اصلی", callback_data="back_home")
+        back_home_btn = InlineKeyboardButton(text="🔄️ تلاش مجدد", callback_data="retry")
         keyboard.add(back_home_btn)
 
         if due_date is None:
             bot.send_message(
                 chat_id=message.chat.id,
-                text="❌ تاریخ وارد شده معتبر نیست . تاریخ را دوباره وارد کنید.",
+                text="❌ تاریخ وارد شده معتبر نیست. تاریخ را دوباره وارد کنید.",
                 reply_markup=keyboard
             )
             return 
@@ -667,35 +752,34 @@ def text_handler(message):
         )
         db.add(task)
         db.flush()
-        print(f"✅ تسک در دیتابیس ثبت شد، ID: {task.id}")
-        print("🔄 در حال ساخت Event در Google Calendar...")
-        try:
-            user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
-            
-            if user and user.access_token:
+        
+        user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
+        
+        if user and user.access_token:
+            try:
                 from app.calendar_handler import CalendarHandler
                 
                 calendar = CalendarHandler(
                     access_token=user.access_token,
                     refresh_token=user.refresh_token
                 )
-                print("✅ CalendarHandler ساخته شد")
                 
                 google_event_id = calendar.create_event(
-                    summary=user_temp_task[user_id]["title"],
-                    description=user_temp_task[user_id]["description"],
-                    start_time=due_date_utc,
-                    end_time=due_date_utc + timedelta(hours=1),
-                    reminder_minutes=120
-                )
+                calendar_id=user.calendar_id,
+                summary=user_temp_task[user_id]["title"],
+                description=user_temp_task[user_id]["description"],
+                start_time=due_date_utc,
+                end_time=due_date_utc + timedelta(hours=1),
+                reminder_minutes=120
+            )
                 
                 task.google_event_id = google_event_id
-            
-        except Exception as e:
-            print(f"❌ خطا: {e}")
-            import traceback
-            traceback.print_exc()
-
+                
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+        else:
+            print("ℹ️ کاربر در Google Calendar لاگین نیست، فقط در دیتابیس ذخیره شد")
 
         db.commit()
         db.close()
@@ -708,11 +792,12 @@ def text_handler(message):
 
     
     elif state == "waiting_new_title":
-        task_id = user_temp_task[user_id]["task_id"]
+        with state_lock:
+            task_id = user_temp_task[user_id]["task_id"]
 
-        if user_id not in user_history:
-            user_history[user_id] = []
-        user_history[user_id].append(user_state[user_id])
+            if user_id not in user_history:
+                user_history[user_id] = []
+            user_history[user_id].append(user_state[user_id])
 
         db = LocalSession()
         task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
@@ -732,11 +817,12 @@ def text_handler(message):
 
     
     elif state == "waiting_new_des":
-        task_id = user_temp_task[user_id]["task_id"]
-        
-        if user_id not in user_history:
-            user_history[user_id] = []
-        user_history[user_id].append(user_state[user_id])
+        with state_lock:
+            task_id = user_temp_task[user_id]["task_id"]
+            
+            if user_id not in user_history:
+                user_history[user_id] = []
+            user_history[user_id].append(user_state[user_id])
 
         db = LocalSession()
         task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
@@ -756,11 +842,12 @@ def text_handler(message):
 
     
     elif state == "waiting_new_due":
-        task_id = user_temp_task[user_id]["task_id"]
-        
-        if user_id not in user_history:
-            user_history[user_id] = []
-        user_history[user_id].append(user_state[user_id])
+        with state_lock:
+            task_id = user_temp_task[user_id]["task_id"]
+            
+            if user_id not in user_history:
+                user_history[user_id] = []
+            user_history[user_id].append(user_state[user_id])
 
         db = LocalSession()
         task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
@@ -783,41 +870,70 @@ def text_handler(message):
         parsed_task = parse_task(message.text)
         if parsed_task is None:
             return 
-        print(parsed_task)
-        task = calculate_task(current_datetime=current_datetime,parsed_task=parsed_task)
+        task = calculate_task(current_datetime=current_datetime, parsed_task=parsed_task)
         if task is None:
             return
         
-        keyboard = InlineKeyboardMarkup()
-        back_home_btn = InlineKeyboardButton(text="🏠 بازگشت به صفحه اصلی", callback_data="back_home")
-        keyboard.add(back_home_btn)
-
         due_date = task["due_date"]
         due_date_utc = due_date.astimezone(timezone.utc)
-
+        
         db = LocalSession()
         new_task = TaskModel(
-            user_id = user_id,
-            title = task["title"],
-            description = task["description"],
-            due_date = due_date_utc
+            user_id=user_id,
+            title=task["title"],
+            description=task["description"],
+            due_date=due_date_utc
         )
         db.add(new_task)
+        db.flush()
+        
+        user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
+        
+        if user and user.access_token and user.calendar_id:
+            try:
+                from app.calendar_handler import CalendarHandler
+                
+                calendar = CalendarHandler(
+                    access_token=user.access_token,
+                    refresh_token=user.refresh_token
+                )
+                
+                google_event_id = calendar.create_event(
+                    calendar_id=user.calendar_id,
+                    summary=new_task.title,
+                    description=new_task.description or "",
+                    start_time=due_date_utc,
+                    end_time=due_date_utc + timedelta(hours=1),
+                    reminder_minutes=120
+                )
+                
+                new_task.google_event_id = google_event_id
+                
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+        else:
+            print("ℹ️ کاربر در Google Calendar لاگین نیست، فقط در دیتابیس ذخیره شد")
+        
         db.commit()
         db.close()
-
+        
         response = f"""
                 ✔️ وظیفه با موفقیت اضافه شد :
                 🔹 نام وظیفه : {task["title"]}
                 📂 توضیحات وظیفه : {task["description"] or '❌ ندارد'}
-                📆 تاریخ اعلان وظیفه : {task["due_date"]}
+                📆 تاریخ اعلان : {task["due_date"]}
             """
-    
-        if not user_id in user_history:
-            user_history[user_id] = []
-        user_history[user_id].append(user_state.get(user_id, "main_menu"))
-        user_state[user_id] = "main_menu"
-
+        with state_lock:
+            if user_id not in user_history:
+                user_history[user_id] = []
+            user_history[user_id].append(user_state.get(user_id, "main_menu"))
+            user_state[user_id] = "main_menu"
+        
+        keyboard = InlineKeyboardMarkup()
+        back_home_btn = InlineKeyboardButton(text="🏠 بازگشت به صفحه اصلی", callback_data="back_home")
+        keyboard.add(back_home_btn)
+        
         bot.send_message(
             chat_id=message.chat.id,
             text=response,

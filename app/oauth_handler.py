@@ -16,7 +16,7 @@ class GoogleOAuthHandler:
             'client_id': self.client_id,
             'redirect_uri': self.redirect_uri,
             'response_type': 'code',
-            'scope': 'https://www.googleapis.com/auth/calendar.events',
+            'scope': 'https://www.googleapis.com/auth/calendar',
             'access_type': 'offline',
             'prompt': 'consent',
             'state': str(user_id)

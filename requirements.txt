@@ -2,6 +2,7 @@
 pyTelegramBotAPI==4.35.0
 python-dotenv
 apscheduler
+jdatetime
 
 # database modules
 sqlalchemy

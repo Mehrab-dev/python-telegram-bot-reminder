@@ -15,8 +15,9 @@ class CalendarHandler:
         )
         self.service = build('calendar', 'v3', credentials=self.credentials)
         print("✅ CalendarHandler مقداردهی شد")
+
     
-    def create_event(self, summary, description, start_time, end_time, reminder_minutes=120):
+    def create_event(self, calendar_id, summary, description, start_time, end_time, reminder_minutes=120):
         print(f"📝 در حال ساخت Event: {summary}")
         print(f"📅 Start: {start_time}, End: {end_time}")
         
@@ -34,7 +35,9 @@ class CalendarHandler:
             'reminders': {
                 'useDefault': False,
                 'overrides': [
-                    {'method': 'popup', 'minutes': reminder_minutes},
+                    {'method': 'popup', 'minutes': 4320},   # ۳ روز قبل (۷۲ ساعت)
+                    {'method': 'popup', 'minutes': 1440},   # ۱ روز قبل (۲۴ ساعت)
+                    {'method': 'popup', 'minutes': 120},    # ۲ ساعت قبل
                 ],
             },
         }
@@ -43,7 +46,7 @@ class CalendarHandler:
         
         try:
             print("🚀 ارسال به Google API...")
-            event = self.service.events().insert(calendarId='primary', body=event).execute()
+            event = self.service.events().insert(calendarId=calendar_id, body=event).execute()
             print(f"✅ Event ساخته شد: {event.get('id')}")
             return event.get('id')
         except HttpError as error:
@@ -55,3 +58,12 @@ class CalendarHandler:
             import traceback
             traceback.print_exc()
             raise
+
+    def create_calendar(self, name):
+        """ساخت تقویم جدید برای کاربر"""
+        calendar = {
+            'summary': name,
+            'timeZone': 'Asia/Tehran'
+        }
+        created_calendar = self.service.calendars().insert(body=calendar).execute()
+        return created_calendar.get('id')
