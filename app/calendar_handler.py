@@ -67,3 +67,44 @@ class CalendarHandler:
         }
         created_calendar = self.service.calendars().insert(body=calendar).execute()
         return created_calendar.get('id')
+
+
+    def update_event(self, calendar_id, event_id, summary=None, description=None, start_time=None, end_time=None):
+        try:
+            # دریافت Event فعلی
+            event = self.service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+            
+            # به‌روزرسانی فیلدها
+            if summary:
+                event['summary'] = summary
+            if description is not None:
+                event['description'] = description
+            if start_time:
+                event['start']['dateTime'] = start_time.isoformat()
+                event['start']['timeZone'] = 'Asia/Tehran'
+            if end_time:
+                event['end']['dateTime'] = end_time.isoformat()
+                event['end']['timeZone'] = 'Asia/Tehran'
+            
+            # ارسال به Google API
+            updated_event = self.service.events().update(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=event
+            ).execute()
+            
+            print(f"✅ Event {event_id} به‌روز شد")
+            return updated_event.get('id')
+            
+        except HttpError as error:
+            print(f"❌ خطا در ویرایش Event: {error}")
+            raise Exception(f"Error updating event: {error}")
+
+    def delete_event(self, calendar_id, event_id):
+        try:
+            self.service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+            print(f"✅ Event {event_id} حذف شد")
+            return True
+        except HttpError as error:
+            print(f"❌ خطا در حذف Event: {error}")
+            raise Exception(f"Error deleting event: {error}")

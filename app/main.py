@@ -11,7 +11,6 @@ from app.database.models import UserModel
 from app.oauth_handler import GoogleOAuthHandler
 from app.schedulers import scheduler_start
 
-
 Base.metadata.create_all(bind=engine)
 
 fastapi_app = FastAPI()
@@ -24,11 +23,6 @@ def root():
 
 @fastapi_app.get("/oauth2callback")
 def oauth2callback(code: str = Query(...), state: str = Query(...)):
-    print("=" * 50)
-    print("📥 درخواست به oauth2callback رسید!")
-    print(f"📝 Code: {code[:20]}...")
-    print(f"👤 State: {state}")
-    print("=" * 50)
     
     try:
         user_id = int(state)

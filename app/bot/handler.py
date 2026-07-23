@@ -72,7 +72,7 @@ def add_task_handler(call):
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "google_login")
-def google_login_handler(call):
+async def google_login_handler(call):
     user_id = call.from_user.id
     
     db = LocalSession()
@@ -164,7 +164,7 @@ def list_task_handler(call):
         user_state[user_id] = "waiting_task_list"
 
     db = LocalSession()
-    tasks = db.query(TaskModel).filter_by(user_id=user_id).order_by(TaskModel.id.desc()).all()
+    tasks = db.query(TaskModel).filter_by(user_id=user_id, status=TaskStatus.PENDING).order_by(TaskModel.id.desc()).all()
     keyboard = InlineKeyboardMarkup()
     for item in tasks:
         task_button = InlineKeyboardButton(
@@ -266,7 +266,7 @@ def get_detail_task(call):
         user_state[user_id] = "waiting_task_detail"
 
     db = LocalSession()
-    task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
+    task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).order_by(TaskModel.id.desc()).one()
     db.close()
 
     status_map = {
@@ -310,7 +310,7 @@ def update_title_handler(call):
         user_state[user_id] = "waiting_new_title"
 
     keyboard = InlineKeyboardMarkup()
-    back_btn = InlineKeyboardButton(text="🔙 بازگشت", callback_data="back")
+    back_btn = InlineKeyboardButton(text="🔙 بازگشت", callback_data="back_from_edit_title")
     keyboard.add(back_btn)
 
     bot.edit_message_text(
@@ -338,7 +338,7 @@ def update_description_handler(call):
         user_state[user_id] = "waiting_new_des"
 
     keyboard = InlineKeyboardMarkup()
-    back_btn = InlineKeyboardButton(text="🔙 بازگشت", callback_data="back")
+    back_btn = InlineKeyboardButton(text="🔙 بازگشت", callback_data="back_from_edit_des")
     keyboard.add(back_btn)
 
     bot.edit_message_text(
@@ -366,7 +366,7 @@ def update_due_date_handler(call):
         user_state[user_id] = "waiting_new_due"
 
     keyboard = InlineKeyboardMarkup()
-    back_btn = InlineKeyboardButton(text="🔙 بازگشت", callback_data="back")
+    back_btn = InlineKeyboardButton(text="🔙 بازگشت", callback_data="back_from_edit_due")
     keyboard.add(back_btn)
 
     bot.edit_message_text(
@@ -423,6 +423,24 @@ def delete_handler(call):
 
     db = LocalSession()
     task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
+    
+    if task.google_event_id:
+        try:
+            user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
+            if user and user.access_token and user.calendar_id:
+                from app.calendar_handler import CalendarHandler
+                calendar = CalendarHandler(
+                    access_token=user.access_token,
+                    refresh_token=user.refresh_token
+                )
+                calendar.delete_event(
+                    calendar_id=user.calendar_id,
+                    event_id=task.google_event_id
+                )
+                print(f"✅ Event {task.google_event_id} از Calendar حذف شد")
+        except Exception as e:
+            print(f"❌ خطا در حذف Event از Calendar: {e}")
+    
     db.delete(task)
     db.commit()
     db.close()
@@ -436,6 +454,48 @@ def delete_handler(call):
         message_id=call.message.message_id,
         text="✔️ وظیفه شما با موفقیت حذف شد",
         reply_markup=keyboard
+    )
+
+
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "no")
+def not_delete_task_handler(call):
+
+    user_id = call.from_user.id
+    task_id = user_temp_task[user_id]["task_id"]
+
+    with state_lock:
+        if user_id not in user_history:
+            user_history[user_id] = []
+        user_history[user_id].append(user_state[user_id])
+        user_state[user_id] = "waiting_task_detail"
+
+
+    db = LocalSession()
+    task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
+    db.close()
+
+    status_map = {
+        TaskStatus.PENDING: "در انتظار",
+        TaskStatus.COMPLETED: "انجام شده"
+    }
+                        
+    jalali = convert_to_jalali(task.due_date)
+    response = (
+        f"📋 جزییات وظیفه\n\n"
+        f"📌 عنوان: {task.title}\n"
+        f"📝 توضیحات: {task.description or '❌ ندارد'}\n"
+        f"📆 تاریخ: {jalali['date']}\n"
+        f"🕐 ساعت: {jalali['time']}\n"
+        f"🔖 وضعیت: {status_map.get(task.status, task.status.value)}"
+    )
+    
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=response,
+        reply_markup=task_detail_keyboard(task_id)
     )
 
 
@@ -480,6 +540,136 @@ def retry_handler(call):
         text="📆 تاریخ اعلان را وارد کنید :",
         reply_markup=add_due_date_task_keyboard()
     )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_from_edit_title")
+def back_from_new_title_handler(call):
+    user_id = call.from_user.id
+
+    with state_lock:
+        if user_id not in user_history:
+            user_history[user_id] = []
+        state = user_state[user_id]
+
+    if state == "waiting_new_title":
+        previous_state = user_history[user_id].pop()
+        with state_lock:
+            user_state[user_id] = previous_state
+            task_id = user_temp_task[user_id]["task_id"]
+    
+            db = LocalSession()
+            task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
+            db.close()
+    
+            status_map = {
+                TaskStatus.PENDING: "در انتظار",
+                TaskStatus.COMPLETED: "انجام شده"
+                }
+            
+            jalali = convert_to_jalali(task.due_date)
+            response = (
+                f"📋 جزییات وظیفه\n\n"
+                f"📌 عنوان: {task.title}\n"
+                f"📝 توضیحات: {task.description or '❌ ندارد'}\n"
+                f"📆 تاریخ: {jalali['date']}\n"
+                f"🕐 ساعت: {jalali['time']}\n"
+                f"🔖 وضعیت: {status_map.get(task.status, task.status.value)}"
+            )
+
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=response,
+                reply_markup=task_detail_keyboard(task_id)
+            )
+
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_from_edit_des")
+def back_from_new_des_handler(call):
+    user_id = call.from_user.id
+
+    with state_lock:
+        if user_id not in user_history:
+            user_history[user_id] = []
+        state = user_state[user_id]
+
+    if state == "waiting_new_des":
+        previous_state = user_history[user_id].pop()
+        with state_lock:
+            user_state[user_id] = previous_state
+            task_id = user_temp_task[user_id]["task_id"]
+    
+        db = LocalSession()
+        task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
+        db.close()
+    
+        status_map = {
+            TaskStatus.PENDING: "در انتظار",
+            TaskStatus.COMPLETED: "انجام شده"
+        }
+                    
+        jalali = convert_to_jalali(task.due_date)
+        response = (
+            f"📋 جزییات وظیفه\n\n"
+            f"📌 عنوان: {task.title}\n"
+            f"📝 توضیحات: {task.description or '❌ ندارد'}\n"
+            f"📆 تاریخ: {jalali['date']}\n"
+            f"🕐 ساعت: {jalali['time']}\n"
+            f"🔖 وضعیت: {status_map.get(task.status, task.status.value)}"
+        )
+
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=response,
+            reply_markup=task_detail_keyboard(task_id)
+        )
+
+
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_from_edit_due")
+def back_from_new_due_handler(call):
+    user_id = call.from_user.id
+
+    with state_lock:
+        if user_id not in user_history:
+            user_history[user_id] = []
+        state = user_state[user_id]
+
+    if state == "waiting_new_due":
+        previous_state = user_history[user_id].pop()
+        with state_lock:
+            user_state[user_id] = previous_state
+            task_id = user_temp_task[user_id]["task_id"]
+    
+        db = LocalSession()
+        task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
+        db.close()
+    
+        status_map = {
+            TaskStatus.PENDING: "در انتظار",
+            TaskStatus.COMPLETED: "انجام شده"
+        }
+                            
+        jalali = convert_to_jalali(task.due_date)
+        response = (
+            f"📋 جزییات وظیفه\n\n"
+            f"📌 عنوان: {task.title}\n"
+            f"📝 توضیحات: {task.description or '❌ ندارد'}\n"
+            f"📆 تاریخ: {jalali['date']}\n"
+            f"🕐 ساعت: {jalali['time']}\n"
+            f"🔖 وضعیت: {status_map.get(task.status, task.status.value)}"
+        )
+
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=response,
+            reply_markup=task_detail_keyboard(task_id)
+        )
+
 
 
 # back handler
@@ -571,52 +761,6 @@ def back_handler(call):
             text="📋 لیست وظایف :",
             reply_markup=keyboard
         )
-    
-
-    elif state == "waiting_new_title":
-        previous_state = user_history[user_id].pop()
-        with state_lock:
-            user_state[user_id] = previous_state
-            task_id = user_temp_task[user_id]["task_id"]
-
-        db = LocalSession()
-        task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
-        db.close()
-
-        response = f"""
-                🔹 نام وظیفه : {task.title}
-                📂 توضیحات وظیفه : {task.description}
-                📆 تاریخ اعلان : {task.due_date}
-            """
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text=response,
-            reply_markup=task_detail_keyboard(task_id)
-        )
-    
-
-    elif state == "waiting_new_des":
-        previous_state = user_history[user_id].pop()
-        with state_lock:
-            user_state[user_id] = previous_state
-            task_id = user_temp_task[user_id]["task_id"]
-
-        db = LocalSession()
-        task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
-        db.close()
-
-        response = f"""
-                🔹 نام وظیفه : {task.title}
-                📂 توضیحات وظیفه : {task.description}
-                📆 تاریخ اعلان : {task.due_date}
-            """
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text=response,
-            reply_markup=task_detail_keyboard(task_id)
-        )
 
 
     elif state == "waiting_new_due":
@@ -664,6 +808,91 @@ def back_home_handler(call):
         "لطفا یکی از گزینه های زیر را انتخاب کن",
         reply_markup=start_keyboard()
     )
+
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "help")
+def help_handler(call):
+
+    user_id = call.from_user.id
+    
+    with state_lock:
+        if user_id not in user_state:
+            user_state[user_id] = "main_menu"
+    
+        if user_id not in user_history:
+            user_history[user_id] = []
+        user_history[user_id].append(user_state[user_id])
+    
+        user_state[user_id] = "waiting_help"
+
+    keyboard = InlineKeyboardMarkup()
+
+    back_home_btn = InlineKeyboardButton(text="🏠 بازگشت به صفحه اصلی", callback_data="back_home")
+    keyboard.add(back_home_btn)
+
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text = """
+            🔦 **راهنمای ربات**
+
+            سلام! 👋  
+            این ربات بهت کمک میکنه وظایفت رو مدیریت کنی و یادآوری‌های به‌موقع دریافت کنی.
+
+            ---
+
+            📌 **ثبت‌نام در Google Calendar (اختیاری)**
+            برای دریافت نوتیف از طریق Google Calendar، باید ثبت‌نام کنی.  
+            اگه ثبت‌نام نکنی، باز هم میتونی از ربات استفاده کنی و نوتیف‌های تلگرام رو دریافت کنی.
+
+            ---
+
+            📋 **کاربردهای ربات**
+
+            ➕ **افزودن وظیفه**  
+            عنوان، توضیحات (اختیاری) و تاریخ رو وارد کن.
+
+            📋 **لیست وظایف**  
+            همه وظایفت رو ببین.
+
+            📝✔️ **لیست وظایف انجام‌شده**  
+            وظایفی که زمانشون گذشته یا انجام شدن رو ببین.
+
+            ✏️ **ویرایش وظیفه**  
+            عنوان، توضیحات یا تاریخ رو تغییر بده.
+
+            🗑️ **حذف وظیفه**  
+            وظیفه رو پاک کن.
+
+            🔗 **ثبت‌نام در Google Calendar**  
+            برای دریافت نوتیف از کلندر، ثبت‌نام کن.
+
+            🚪 **خروج از حساب Google**  
+            از حساب کلندر خارج شو.
+
+            ---
+
+            🔔 **نحوه نوتیف‌ها**
+
+            **تلگرام:**
+            • ۲ ساعت قبل از هر وظیفه
+            • هر شب ساعت ۱۰، اگه حداقل ۱۲ ساعت تا انجام وظیفه مونده باشه
+
+            **Google Calendar:**
+            • ۲ ساعت قبل از هر وظیفه
+            • ۲۴ ساعت قبل (اگه حداقل ۲۴ ساعت مونده باشه)
+            • ۷۲ ساعت قبل (اگه حداقل ۷۲ ساعت مونده باشه)
+
+            ---
+
+            📞 **پشتیبانی**  
+            اگه سوال یا مشکلی داری، میتونی با پشتیبانی در ارتباط باشی.
+            """,
+        reply_markup=keyboard
+    )
+
+
 
 
 # text handlers
@@ -794,7 +1023,6 @@ def text_handler(message):
     elif state == "waiting_new_title":
         with state_lock:
             task_id = user_temp_task[user_id]["task_id"]
-
             if user_id not in user_history:
                 user_history[user_id] = []
             user_history[user_id].append(user_state[user_id])
@@ -803,6 +1031,25 @@ def text_handler(message):
         task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
         task.title = message.text
         db.commit()
+        
+        if task.google_event_id:
+            try:
+                user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
+                if user and user.access_token and user.calendar_id:
+                    from app.calendar_handler import CalendarHandler
+                    calendar = CalendarHandler(
+                        access_token=user.access_token,
+                        refresh_token=user.refresh_token
+                    )
+                    calendar.update_event(
+                        calendar_id=user.calendar_id,
+                        event_id=task.google_event_id,
+                        summary=message.text
+                    )
+                    print(f"✅ Event {task.google_event_id} در Calendar به‌روز شد")
+            except Exception as e:
+                print(f"❌ خطا در ویرایش Event: {e}")
+        
         db.close()
 
         keyboard = InlineKeyboardMarkup()
@@ -819,7 +1066,6 @@ def text_handler(message):
     elif state == "waiting_new_des":
         with state_lock:
             task_id = user_temp_task[user_id]["task_id"]
-            
             if user_id not in user_history:
                 user_history[user_id] = []
             user_history[user_id].append(user_state[user_id])
@@ -828,6 +1074,25 @@ def text_handler(message):
         task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
         task.description = message.text
         db.commit()
+        
+        if task.google_event_id:
+            try:
+                user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
+                if user and user.access_token and user.calendar_id:
+                    from app.calendar_handler import CalendarHandler
+                    calendar = CalendarHandler(
+                        access_token=user.access_token,
+                        refresh_token=user.refresh_token
+                    )
+                    calendar.update_event(
+                        calendar_id=user.calendar_id,
+                        event_id=task.google_event_id,
+                        description=message.text
+                    )
+                    print(f"✅ Event {task.google_event_id} در Calendar به‌روز شد")
+            except Exception as e:
+                print(f"❌ خطا در ویرایش Event: {e}")
+        
         db.close()
 
         keyboard = InlineKeyboardMarkup()
@@ -844,15 +1109,53 @@ def text_handler(message):
     elif state == "waiting_new_due":
         with state_lock:
             task_id = user_temp_task[user_id]["task_id"]
-            
             if user_id not in user_history:
                 user_history[user_id] = []
             user_history[user_id].append(user_state[user_id])
 
+        try:
+            new_due_date = parse_date(message.text)
+            if new_due_date is None:
+                raise ValueError
+        except:
+            if user_id in user_temp_task:
+                user_temp_task[user_id].pop("due_date", None)
+            keyboard = InlineKeyboardMarkup()
+            back_home_btn = InlineKeyboardButton(text="🏠 بازگشت به صفحه اصلی", callback_data="back_home")
+            keyboard.add(back_home_btn)
+            bot.send_message(
+                chat_id=message.chat.id,
+                text="❌ خطا در تحلیل تاریخ! لطفاً تاریخ را به فرمت صحیح وارد کنید.",
+                reply_markup=keyboard
+            )
+            return
+
+        new_due_date_utc = new_due_date.astimezone(timezone.utc)
+
         db = LocalSession()
         task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
-        task.due_date = message.text
+        task.due_date = new_due_date_utc
         db.commit()
+        
+        if task.google_event_id:
+            try:
+                user = db.query(UserModel).filter(UserModel.user_id == user_id).first()
+                if user and user.access_token and user.calendar_id:
+                    from app.calendar_handler import CalendarHandler
+                    calendar = CalendarHandler(
+                        access_token=user.access_token,
+                        refresh_token=user.refresh_token
+                    )
+                    calendar.update_event(
+                        calendar_id=user.calendar_id,
+                        event_id=task.google_event_id,
+                        start_time=new_due_date_utc,
+                        end_time=new_due_date_utc + timedelta(hours=1)
+                    )
+                    print(f"✅ Event {task.google_event_id} در Calendar به‌روز شد")
+            except Exception as e:
+                print(f"❌ خطا در ویرایش Event: {e}")
+        
         db.close()
 
         keyboard = InlineKeyboardMarkup()
@@ -864,10 +1167,28 @@ def text_handler(message):
             text="✔️ تاریخ اعلان با موفقیت ویرایش شد",
             reply_markup=keyboard
         )
+
     
     else:
         current_datetime = datetime.now()
-        parsed_task = parse_task(message.text)
+        try:
+            parsed_task = parse_task(message.text)
+        except:
+
+            if user_id in user_temp_task:
+                user_temp_task[user_id].pop()
+
+            keyboard = InlineKeyboardMarkup()
+            back_home_btn = InlineKeyboardButton(text="🏠 بازگشت به صفحه اصلی", callback_data="back_home")
+            keyboard.add(back_home_btn)
+
+            bot.send_message(
+                chat_id=message.chat.id,
+                text=f"❌ خطا در ارتباط با سرویس تحلیل تاریخ! لطفاً اتصال اینترنت یا VPN خود را بررسی کنید و دوباره تلاش کنید.",
+                reply_markup=keyboard
+            )
+            return
+        
         if parsed_task is None:
             return 
         task = calculate_task(current_datetime=current_datetime, parsed_task=parsed_task)
@@ -914,16 +1235,32 @@ def text_handler(message):
                 traceback.print_exc()
         else:
             print("ℹ️ کاربر در Google Calendar لاگین نیست، فقط در دیتابیس ذخیره شد")
+
+        task_id = new_task.id
         
         db.commit()
         db.close()
+
+        db = LocalSession()
+        task = db.query(TaskModel).filter_by(id=task_id, user_id=user_id).one()
+        db.close()
         
-        response = f"""
-                ✔️ وظیفه با موفقیت اضافه شد :
-                🔹 نام وظیفه : {task["title"]}
-                📂 توضیحات وظیفه : {task["description"] or '❌ ندارد'}
-                📆 تاریخ اعلان : {task["due_date"]}
-            """
+        status_map = {
+            TaskStatus.PENDING: "در انتظار",
+            TaskStatus.COMPLETED: "انجام شده"
+            }
+        
+        jalali = convert_to_jalali(task.due_date)
+        
+        response = (
+            f"📋 جزییات وظیفه\n\n"
+            f"📌 عنوان: {task.title}\n"
+            f"📝 توضیحات: {task.description or '❌ ندارد'}\n"
+            f"📆 تاریخ: {jalali['date']}\n"
+            f"🕐 ساعت: {jalali['time']}\n"
+            f"🔖 وضعیت: {status_map.get(task.status, task.status.value)}"
+        )
+
         with state_lock:
             if user_id not in user_history:
                 user_history[user_id] = []

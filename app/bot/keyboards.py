@@ -9,10 +9,13 @@ def start_keyboard():
     help_btn = InlineKeyboardButton(text=" 🔦 راهنما", callback_data="help")
     google_btn = InlineKeyboardButton("🔗 ثبت‌نام در Google Calendar", callback_data="google_login")
     logout_btn = InlineKeyboardButton("🚪 خروج از حساب Google", callback_data="logout")
+    support_btn = InlineKeyboardButton(text="📞 ارتباط با پشتیبانی", url="https://t.me/Mh1RBa")
+
 
     keyboard.add(add_task_btn, list_task_btn)
     keyboard.add(comp_list_task_btn, help_btn)
     keyboard.add(google_btn, logout_btn)
+    keyboard.add(support_btn)
 
     return keyboard
 

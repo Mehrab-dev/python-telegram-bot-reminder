@@ -1,6 +1,8 @@
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timedelta
 from sqlalchemy import or_
+import jdatetime
 
 from app.database.database import LocalSession
 from app.database.models import TaskModel, TaskStatus
@@ -9,42 +11,13 @@ from app.bot.client import bot
 
 scheduler = BackgroundScheduler()
 
+def convert_to_jalali(date_time):
+    jalali_date = jdatetime.datetime.fromgregorian(datetime=date_time)
+    return {
+        'date': jalali_date.strftime("%Y/%m/%d"),
+        'time': jalali_date.strftime("%H:%M")
+    }
 
-# def completed_task():
-
-#     now = datetime.now()
-#     target = now + timedelta(hours=2)
-#     start = target - timedelta(seconds=10)
-#     end = target + timedelta(seconds=10)
-
-#     db = LocalSession()
-#     task = db.query(TaskModel).filter(
-#         TaskModel.status==TaskStatus.PENDING),
-#         TaskModel.due_date.between(start, end).all()
-
-#     for item in task:
-#         user_id = item.user_id
-
-#         response = f"""
-#                     ⏰ تا پایان زمان انجام وظیفه شما 2 ساعت بیشتر نمونده
-#                     🔹 نام وظیفه : {item.title}
-#                     📂 توضیحات وظیفه : {item.description}
-#                 """
-#         bot.send_message(
-#             chat_id=user_id,
-#             text=response
-#         )
-
-#         item.status = TaskStatus.COMPLETED
-
-#     db.commit()
-#     db.close()
-
-# scheduler.add_job(
-#     completed_task,
-#     "interval",
-#     seconds=10
-# )
 
 
 def send_final_notification():
@@ -60,21 +33,27 @@ def send_final_notification():
         TaskModel.due_date.between(start, end)
     ).all()
 
+    keyboard = InlineKeyboardMarkup()
+    back_home_btn = InlineKeyboardButton(text="متوجه شدم", callback_data="back_home")
+    keyboard.add(back_home_btn)
+
     for task in tasks:
         user_id = task.user_id
-        response = f"""
-                    🔔 یادآوری \n
-                    سلام 👋
-                    فقط 2 ساعت تا انجام وظیفه زیر زمان داری :\n
-                    📌 عنوان وظیفه : {task.title}
-                    📝 توضیحان وظیفه : {task.description or "❌ ندارد"} 
-                    🕜 زمان انجام : {task.due_date} \n
-                    🌱 موفق باشی
-                """
+        jalali = convert_to_jalali(task.due_date)                
+        response = (
+                f"🔔 یادآوری \n"
+                f"👋 سلام خواستم بهت یادآوری کنم تا وظیفه زیر 2 ساعت بیشتر نمونده : \n"
+                f"📌 عنوان: {task.title}\n"
+                f"📝 توضیحات: {task.description or '❌ ندارد'}\n"
+                f"📆 تاریخ: {jalali['date']}\n"
+                f"🕐 ساعت: {jalali['time']}\n\n"
+                "🌱 موفق باشی"
+            )
         try:
             bot.send_message(
                 chat_id=user_id,
-                text=response
+                text=response,
+                reply_markup=keyboard
             )
             task.status = TaskStatus.COMPLETED
         
@@ -99,14 +78,17 @@ def send_notification():
 
     for task in tasks:
         user_id = task.user_id
-        response = f"""
-                🌙 یادآوری \n
-                این پیام جهت یادآوری وظیفه ثبت شده شما ارسال شده است.\n
-                📌 عنوان وظیفه : {task.title}
-                📝 توضیحات وظیفه : {task.description}
-                🕜 زمان انجام : {task.due_date} \n
-                🌱 موفق باشی
-            """
+        jalali = convert_to_jalali(task.due_date)
+                
+        response = (
+            f"🔔 یادآوری \n"
+            f"📌 عنوان: {task.title}\n"
+            f"📝 توضیحات: {task.description or '❌ ندارد'}\n"
+            f"📆 تاریخ: {jalali['date']}\n"
+            f"🕐 ساعت: {jalali['time']}\n\n"
+            "🌱 موفق باشی"
+        )
+        
         try:
             bot.send_message(
                 chat_id=user_id,
